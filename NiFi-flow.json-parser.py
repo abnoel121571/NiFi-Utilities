@@ -220,39 +220,126 @@ class NiFiFlowParser:
         return processors
     
     def print_processor_summary(self):
-        """Print a summary of all processors."""
+        """Print a summary of all processors with focus on key configurations."""
         if not self.processors:
             print("No processors found.")
             return
         
-        print(f"\n{'='*80}")
-        print(f"NIFI PROCESSOR SUMMARY - Total Processors: {len(self.processors)}")
-        print(f"{'='*80}")
+        print(f"\n{'='*100}")
+        print(f"NIFI PROCESSOR CONFIGURATION SUMMARY - Total Processors: {len(self.processors)}")
+        print(f"{'='*100}")
         
-        for i, proc in enumerate(self.processors, 1):
-            print(f"\n[{i}] {proc['name']}")
-            print(f"    ID: {proc['id']}")
-            print(f"    Type: {proc['type']}")
-            print(f"    Group: {proc['group']}")
-            print(f"    Concurrent Tasks: {proc['concurrent_tasks']}")
-            print(f"    Scheduling Period: {proc['scheduling_period']}")
-            print(f"    Auto-terminated Relationships: {', '.join(proc['auto_terminated_relationships']) if proc['auto_terminated_relationships'] else 'None'}")
+        # Group processors by type for better organization
+        processors_by_type = {}
+        for proc in self.processors:
+            proc_type = proc['type'].split('.')[-1]  # Get just the class name
+            if proc_type not in processors_by_type:
+                processors_by_type[proc_type] = []
+            processors_by_type[proc_type].append(proc)
+        
+        # Display processors grouped by type
+        for proc_type in sorted(processors_by_type.keys()):
+            procs = processors_by_type[proc_type]
+            print(f"\n{'▼' * 80}")
+            print(f"PROCESSOR TYPE: {proc_type} ({len(procs)} instances)")
+            print(f"{'▼' * 80}")
             
-            if proc['properties']:
-                print(f"    Properties ({len(proc['properties'])} total):")
-                for key, value in proc['properties'].items():
-                    # Truncate long values for readability
-                    display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
-                    print(f"      • {key}: {display_value}")
-            
-            if proc['relationships']:
-                print(f"    Relationships:")
-                for rel in proc['relationships']:
-                    auto_term = " [AUTO-TERMINATE]" if rel['autoTerminate'] else ""
-                    print(f"      • {rel['name']}{auto_term}")
+            for i, proc in enumerate(procs, 1):
+                print(f"\n[{i}] NAME: {proc['name']}")
+                print(f"    PROCESSOR ID: {proc['id']}")
+                print(f"    FULL TYPE: {proc['type']}")
+                print(f"    GROUP LOCATION: {proc['group']}")
+                print(f"    CONCURRENT TASKS: {proc['concurrent_tasks']}")
+                print(f"    SCHEDULING: {proc['scheduling_period']}")
+                
+                if proc['auto_terminated_relationships']:
+                    print(f"    AUTO-TERMINATED: {', '.join(proc['auto_terminated_relationships'])}")
+                
+                # Show key properties based on processor type
+                if proc['properties']:
+                    key_props = self.get_key_properties_for_processor(proc_type, proc['properties'])
+                    if key_props:
+                        print(f"    KEY CONFIGURATIONS:")
+                        for key, value in key_props.items():
+                            # Handle sensitive properties
+                            if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                                display_value = "***SENSITIVE***" if value else "Not Set"
+                            else:
+                                display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                            print(f"      • {key}: {display_value}")
+                    
+                    # Show all properties count
+                    print(f"    TOTAL PROPERTIES: {len(proc['properties'])}")
+                    
+                    # Optionally show all properties (truncated)
+                    if len(proc['properties']) <= 10:  # Only show all if not too many
+                        print(f"    ALL PROPERTIES:")
+                        for key, value in proc['properties'].items():
+                            if key not in (key_props.keys() if key_props else []):
+                                if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                                    display_value = "***SENSITIVE***" if value else "Not Set"
+                                else:
+                                    display_value = str(value)[:80] + "..." if len(str(value)) > 80 else str(value)
+                                print(f"      • {key}: {display_value}")
     
-    def export_to_csv(self, output_file: str = "nifi_processors.csv"):
-        """Export processor information to CSV file."""
+    def get_key_properties_for_processor(self, proc_type: str, properties: dict) -> dict:
+        """Extract key properties based on processor type."""
+        key_props = {}
+        proc_type_lower = proc_type.lower()
+        
+        # Define key properties for common processors
+        key_property_mappings = {
+            'mergecontent': ['Merge Format', 'Merge Strategy', 'Minimum Number of Entries', 'Maximum Number of Entries', 'Minimum Group Size', 'Maximum Group Size', 'Delimiter Strategy'],
+            'fetchs3object': ['Bucket', 'Object Key', 'Region', 'Access Key ID', 'Secret Access Key', 'Credentials File', 'AWS Credentials Provider service'],
+            'puts3object': ['Bucket', 'Object Key', 'Region', 'Access Key ID', 'Secret Access Key', 'Content Type', 'Storage Class'],
+            'getfile': ['Input Directory', 'File Filter', 'Recurse Subdirectories', 'Keep Source File', 'Minimum File Age', 'Maximum File Age'],
+            'putfile': ['Directory', 'Conflict Resolution Strategy', 'Create Missing Directories'],
+            'invokehttp': ['HTTP Method', 'Remote URL', 'SSL Context Service', 'Username', 'Password', 'Connect Timeout', 'Read Timeout'],
+            'executescript': ['Script Engine', 'Script File', 'Script Body'],
+            'executestream': ['Command Path', 'Command Arguments', 'Working Directory'],
+            'splittext': ['Line Split Count', 'Maximum Fragment Size', 'Header Line Count', 'Remove Trailing Newlines'],
+            'splitjson': ['JsonPath Expression'],
+            'splitxml': ['Split Depth'],
+            'routeonattribute': ['Routing Strategy'],
+            'routeoncontent': ['Match Requirement'],
+            'updateattribute': [],  # All properties are relevant for UpdateAttribute
+            'extracttext': ['Character Set', 'Maximum Buffer Size'],
+            'replacetext': ['Search Value', 'Replacement Value', 'Character Set', 'Maximum Buffer Size', 'Replacement Strategy'],
+            'convertrecord': ['Record Reader', 'Record Writer'],
+            'queryrecord': ['Record Reader', 'Record Writer', 'Include Zero Record FlowFiles'],
+            'partitionrecord': ['Record Reader', 'Record Writer', 'Partition Values'],
+            'publishkafka': ['Kafka Brokers', 'Topic Name', 'Delivery Guarantee', 'Key Attribute Encoding', 'Message Key Field'],
+            'consumekafka': ['Kafka Brokers', 'Topic Name(s)', 'Topic Name Format', 'Group ID', 'Offset Reset'],
+            'wait': ['Release Signal Identifier', 'Target Signal Count', 'Signal Counter Name'],
+            'notify': ['Release Signal Identifier', 'Signal Counter Name', 'Signal Counter Delta'],
+            'generateflowfile': ['File Size', 'Batch Size', 'Data Format', 'Custom Text'],
+        }
+        
+        # Find matching processor type (partial match)
+        relevant_properties = []
+        for key, props in key_property_mappings.items():
+            if key in proc_type_lower:
+                relevant_properties = props
+                break
+        
+        # Extract the relevant properties
+        for prop_key, prop_value in properties.items():
+            # Always include if it's in our key list
+            if prop_key in relevant_properties:
+                key_props[prop_key] = prop_value
+            # Also include properties that look important (non-empty values)
+            elif prop_value and str(prop_value).strip():
+                # For UpdateAttribute, include all non-empty properties
+                if 'updateattribute' in proc_type_lower:
+                    key_props[prop_key] = prop_value
+                # For others, include if it looks like a key configuration
+                elif any(keyword in prop_key.lower() for keyword in ['url', 'path', 'directory', 'file', 'host', 'port', 'topic', 'queue', 'table', 'query', 'expression', 'format', 'strategy']):
+                    key_props[prop_key] = prop_value
+        
+        return key_props
+    
+    def export_processor_details_csv(self, output_file: str = "nifi_processor_details.csv"):
+        """Export detailed processor information with key configurations to CSV."""
         import csv
         
         if not self.processors:
@@ -262,33 +349,114 @@ class NiFiFlowParser:
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
-                    'name', 'id', 'type', 'group', 'concurrent_tasks', 
-                    'scheduling_period', 'penalty_duration', 'yield_duration',
-                    'bulletin_level', 'auto_terminated_relationships', 'properties_count'
+                    'processor_name', 'processor_id', 'processor_type', 'processor_class', 
+                    'group_location', 'concurrent_tasks', 'scheduling_period', 
+                    'auto_terminated_relationships', 'property_name', 'property_value'
                 ]
                 
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 
                 for proc in self.processors:
-                    row = {
-                        'name': proc['name'],
-                        'id': proc['id'],
-                        'type': proc['type'],
-                        'group': proc['group'],
+                    proc_type = proc['type'].split('.')[-1]  # Just the class name
+                    base_row = {
+                        'processor_name': proc['name'],
+                        'processor_id': proc['id'],
+                        'processor_type': proc_type,
+                        'processor_class': proc['type'],
+                        'group_location': proc['group'],
                         'concurrent_tasks': proc['concurrent_tasks'],
                         'scheduling_period': proc['scheduling_period'],
-                        'penalty_duration': proc['penalty_duration'],
-                        'yield_duration': proc['yield_duration'],
-                        'bulletin_level': proc['bulletin_level'],
                         'auto_terminated_relationships': '; '.join(proc['auto_terminated_relationships']),
-                        'properties_count': len(proc['properties'])
                     }
-                    writer.writerow(row)
+                    
+                    # Create one row per property
+                    if proc['properties']:
+                        for prop_name, prop_value in proc['properties'].items():
+                            row = base_row.copy()
+                            row['property_name'] = prop_name
+                            row['property_value'] = str(prop_value) if prop_value is not None else ''
+                            writer.writerow(row)
+                    else:
+                        # If no properties, still write the processor info
+                        row = base_row.copy()
+                        row['property_name'] = ''
+                        row['property_value'] = ''
+                        writer.writerow(row)
             
-            print(f"Processor information exported to: {output_file}")
+            print(f"Detailed processor information exported to: {output_file}")
         except Exception as e:
             print(f"Error exporting to CSV: {e}")
+    
+    def create_processor_inventory(self):
+        """Create a focused inventory of specific processor types and their key configs."""
+        if not self.processors:
+            print("No processors found for inventory.")
+            return
+        
+        # Focus on common/interesting processor types
+        focus_processors = [
+            'MergeContent', 'FetchS3Object', 'PutS3Object', 'GetFile', 'PutFile',
+            'InvokeHTTP', 'ExecuteScript', 'ExecuteStreamCommand', 'SplitText', 
+            'SplitJson', 'RouteOnAttribute', 'UpdateAttribute', 'ReplaceText',
+            'ConvertRecord', 'QueryRecord', 'PublishKafka', 'ConsumeKafka',
+            'Wait', 'Notify', 'GenerateFlowFile'
+        ]
+        
+        print(f"\n{'#' * 100}")
+        print(f"FOCUSED PROCESSOR INVENTORY - KEY PROCESSORS AND CONFIGURATIONS")
+        print(f"{'#' * 100}")
+        
+        found_focus_processors = {}
+        
+        for proc in self.processors:
+            proc_type = proc['type'].split('.')[-1]
+            
+            # Check if this is one of our focus processors
+            for focus_type in focus_processors:
+                if focus_type.lower() in proc_type.lower():
+                    if focus_type not in found_focus_processors:
+                        found_focus_processors[focus_type] = []
+                    found_focus_processors[focus_type].append(proc)
+                    break
+        
+        # Display focused inventory
+        for focus_type in sorted(found_focus_processors.keys()):
+            procs = found_focus_processors[focus_type]
+            print(f"\n{'=' * 60}")
+            print(f"🔧 {focus_type.upper()} PROCESSORS ({len(procs)} found)")
+            print(f"{'=' * 60}")
+            
+            for proc in procs:
+                print(f"\n  📋 NAME: {proc['name']}")
+                print(f"  🆔 ID: {proc['id']}")
+                print(f"  📍 LOCATION: {proc['group']}")
+                print(f"  ⚙️  SCHEDULING: {proc['scheduling_period']} | Tasks: {proc['concurrent_tasks']}")
+                
+                # Get key configurations
+                key_props = self.get_key_properties_for_processor(focus_type, proc['properties'])
+                if key_props:
+                    print(f"  🔑 KEY CONFIGURATIONS:")
+                    for key, value in key_props.items():
+                        if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                            display_value = "***HIDDEN***" if value else "Not Set"
+                        else:
+                            display_value = str(value) if len(str(value)) <= 60 else str(value)[:60] + "..."
+                        print(f"     • {key}: {display_value}")
+                
+                print(f"  📊 TOTAL PROPERTIES: {len(proc['properties'])}")
+        
+        # Show summary
+        print(f"\n{'#' * 100}")
+        print(f"INVENTORY SUMMARY:")
+        print(f"{'#' * 100}")
+        for focus_type, procs in found_focus_processors.items():
+            print(f"  • {focus_type}: {len(procs)} instances")
+        
+        total_focus = sum(len(procs) for procs in found_focus_processors.values())
+        print(f"\nTotal Focus Processors: {total_focus} out of {len(self.processors)} total processors")
+        
+        return found_focus_processors
     
     def get_processors_by_type(self, processor_type: str) -> List[Dict]:
         """Get all processors of a specific type."""
@@ -303,6 +471,11 @@ def main():
     """Main function to demonstrate usage."""
     if len(sys.argv) != 2:
         print("Usage: python nifi_parser.py <path_to_nifi_json_file>")
+        print("\nThis script will:")
+        print("  • Parse your NiFi JSON export file")
+        print("  • Focus on key processors like MergeContent, FetchS3Object, etc.")
+        print("  • Show processor IDs and key configurations")
+        print("  • Export detailed CSV for analysis")
         sys.exit(1)
     
     json_file_path = sys.argv[1]
@@ -318,24 +491,44 @@ def main():
     processors = parser.parse_flow()
     
     if not processors:
-        print("No processors found in the JSON file.")
+        print("\n❌ No processors found in the JSON file.")
+        print("\n🔍 This could happen if:")
+        print("  • The JSON structure is different than expected")
+        print("  • The file is not a NiFi flow export")
+        print("  • The processors are nested differently")
+        print("\n📋 Check the JSON structure analysis above for clues.")
         sys.exit(1)
     
-    # Print summary
+    print(f"\n✅ SUCCESS: Found {len(processors)} processors!")
+    
+    # Create focused processor inventory
+    parser.create_processor_inventory()
+    
+    # Print detailed summary
     parser.print_processor_summary()
     
     # Show processor types
-    print(f"\n{'='*50}")
-    print("PROCESSOR TYPES FOUND:")
-    print(f"{'='*50}")
-    for proc_type in sorted(parser.get_processor_types()):
-        count = len(parser.get_processors_by_type(proc_type))
-        print(f"• {proc_type} ({count} instances)")
+    print(f"\n{'=' * 60}")
+    print("ALL PROCESSOR TYPES FOUND:")
+    print(f"{'=' * 60}")
+    processor_types = {}
+    for proc in processors:
+        proc_type = proc['type'].split('.')[-1]
+        if proc_type in processor_types:
+            processor_types[proc_type] += 1
+        else:
+            processor_types[proc_type] = 1
     
-    # Export to CSV
-    parser.export_to_csv()
+    for proc_type in sorted(processor_types.keys()):
+        count = processor_types[proc_type]
+        print(f"  • {proc_type}: {count} instance{'s' if count != 1 else ''}")
     
-    print(f"\nParsing complete! Found {len(processors)} processors.")
+    # Export detailed CSV
+    parser.export_processor_details_csv()
+    
+    print(f"\n🎉 Analysis complete!")
+    print(f"📊 Total processors analyzed: {len(processors)}")
+    print(f"📁 Detailed CSV exported for further analysis")
 
 
 if __name__ == "__main__":
