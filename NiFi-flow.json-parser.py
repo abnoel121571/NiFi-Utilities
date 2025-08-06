@@ -59,13 +59,13 @@ class NiFiFlowParser:
     def parse_processor(self, processor: Dict[str, Any], group_name: str) -> Dict[str, Any]:
         """Parse individual processor and extract configuration."""
         processor_info = {
-            'id': processor.get('identifier', 'Unknown'),
+            'id': processor.get('identifier', processor.get('id', 'Unknown')),
             'name': processor.get('name', 'Unnamed Processor'),
-            'type': processor.get('type', 'Unknown Type'),
+            'type': processor.get('type', processor.get('class', 'Unknown Type')),
             'group': group_name,
-            'state': processor.get('schedulingStrategy', 'Unknown'),
-            'concurrent_tasks': processor.get('concurrentlySchedulableTaskCount', 1),
-            'scheduling_period': processor.get('schedulingPeriod', 'Unknown'),
+            'state': processor.get('schedulingStrategy', processor.get('state', 'Unknown')),
+            'concurrent_tasks': processor.get('concurrentlySchedulableTaskCount', processor.get('maxConcurrentTasks', 1)),
+            'scheduling_period': processor.get('schedulingPeriod', processor.get('runSchedule', 'Unknown')),
             'penalty_duration': processor.get('penaltyDuration', 'Unknown'),
             'yield_duration': processor.get('yieldDuration', 'Unknown'),
             'bulletin_level': processor.get('bulletinLevel', 'Unknown'),
@@ -74,9 +74,11 @@ class NiFiFlowParser:
             'relationships': []
         }
         
-        # Extract properties
+        # Extract properties - handle different property structures
         if 'properties' in processor and processor['properties']:
             processor_info['properties'] = processor['properties']
+        elif 'config' in processor and 'properties' in processor['config']:
+            processor_info['properties'] = processor['config']['properties']
         
         # Extract relationships
         if 'relationships' in processor:
@@ -89,7 +91,88 @@ class NiFiFlowParser:
                 for rel in processor['relationships']
             ]
         
+        # Handle component-level information if present
+        if 'component' in processor:
+            component = processor['component']
+            processor_info.update({
+                'id': component.get('id', processor_info['id']),
+                'name': component.get('name', processor_info['name']),
+                'type': component.get('type', processor_info['type']),
+            })
+            if 'config' in component:
+                config = component['config']
+                processor_info.update({
+                    'concurrent_tasks': config.get('concurrentlySchedulableTaskCount', processor_info['concurrent_tasks']),
+                    'scheduling_period': config.get('schedulingPeriod', processor_info['scheduling_period']),
+                    'penalty_duration': config.get('penaltyDuration', processor_info['penalty_duration']),
+                    'yield_duration': config.get('yieldDuration', processor_info['yield_duration']),
+                    'bulletin_level': config.get('bulletinLevel', processor_info['bulletin_level']),
+                    'auto_terminated_relationships': config.get('autoTerminatedRelationships', processor_info['auto_terminated_relationships']),
+                })
+                if 'properties' in config:
+                    processor_info['properties'] = config['properties']
+        
         return processor_info
+    
+    def analyze_json_structure(self):
+        """Analyze and print the JSON structure to help with debugging."""
+        print(f"\n{'='*60}")
+        print("JSON STRUCTURE ANALYSIS")
+        print(f"{'='*60}")
+        
+        def print_structure(data, level=0, max_level=3):
+            indent = "  " * level
+            if level > max_level:
+                return
+            
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if isinstance(value, dict):
+                        print(f"{indent}{key}: {{dict with {len(value)} keys}}")
+                        if level < max_level:
+                            print_structure(value, level + 1, max_level)
+                    elif isinstance(value, list):
+                        print(f"{indent}{key}: [list with {len(value)} items]")
+                        if value and level < max_level:
+                            print(f"{indent}  First item type: {type(value[0]).__name__}")
+                            if isinstance(value[0], dict):
+                                print(f"{indent}  First item keys: {list(value[0].keys())}")
+                    else:
+                        value_str = str(value)[:50] + "..." if len(str(value)) > 50 else str(value)
+                        print(f"{indent}{key}: {value_str}")
+            elif isinstance(data, list):
+                print(f"{indent}List with {len(data)} items")
+                if data:
+                    print(f"{indent}First item type: {type(data[0]).__name__}")
+        
+        print_structure(self.flow_data)
+        print(f"{'='*60}\n")
+    
+    def find_processors_recursively(self, data, path="root"):
+        """Recursively search for processors in any part of the JSON structure."""
+        processors = []
+        
+        if isinstance(data, dict):
+            # Check if this dict contains processors
+            if 'processors' in data and isinstance(data['processors'], list):
+                print(f"Found {len(data['processors'])} processors at: {path}")
+                for processor in data['processors']:
+                    processor_info = self.parse_processor(processor, path)
+                    processors.append(processor_info)
+            
+            # Recursively search in all dict values
+            for key, value in data.items():
+                if key != 'processors':  # Avoid processing the same processors twice
+                    child_processors = self.find_processors_recursively(value, f"{path}.{key}")
+                    processors.extend(child_processors)
+        
+        elif isinstance(data, list):
+            # Search in list items
+            for i, item in enumerate(data):
+                child_processors = self.find_processors_recursively(item, f"{path}[{i}]")
+                processors.extend(child_processors)
+        
+        return processors
     
     def parse_flow(self) -> List[Dict]:
         """Parse the entire flow and extract all processors."""
@@ -97,26 +180,42 @@ class NiFiFlowParser:
             print("No flow data loaded. Please load JSON first.")
             return []
         
+        # First, analyze the structure
+        self.analyze_json_structure()
+        
         processors = []
         
-        # Handle different JSON structures
+        # Handle known JSON structures first
         if 'flowContents' in self.flow_data:
-            # Template export format
+            print("Detected: NiFi Template export format")
             flow_contents = self.flow_data['flowContents']
             processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'processGroupFlow' in self.flow_data:
-            # Process group export format
+            print("Detected: Process Group export format")
             flow_contents = self.flow_data['processGroupFlow']['flow']
             processors = self.extract_processors_from_group(flow_contents, "Root")
+        elif 'versionedFlowSnapshot' in self.flow_data:
+            print("Detected: Registry versioned flow format")
+            flow_contents = self.flow_data['versionedFlowSnapshot']['flowContents']
+            processors = self.extract_processors_from_group(flow_contents, "Root")
+        elif 'flow' in self.flow_data:
+            print("Detected: Flow export format")
+            flow_contents = self.flow_data['flow']
+            processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'processors' in self.flow_data:
-            # Direct processor list
+            print("Detected: Direct processor list format")
             for processor in self.flow_data['processors']:
                 processor_info = self.parse_processor(processor, "Root")
                 processors.append(processor_info)
         else:
-            # Try to find processors in the root level
-            processors = self.extract_processors_from_group(self.flow_data, "Root")
+            print("Unknown format - attempting recursive search...")
+            processors = self.find_processors_recursively(self.flow_data)
         
+        if not processors:
+            print("No processors found with standard parsing. Trying recursive search...")
+            processors = self.find_processors_recursively(self.flow_data)
+        
+        print(f"Total processors found: {len(processors)}")
         self.processors = processors
         return processors
     
