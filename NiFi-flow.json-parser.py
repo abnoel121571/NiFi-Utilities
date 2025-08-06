@@ -338,8 +338,8 @@ class NiFiFlowParser:
         
         return key_props
     
-    def export_processor_details_csv(self, output_file: str = "nifi_processor_details.csv"):
-        """Export detailed processor information with key configurations to CSV."""
+    def export_processor_summary_csv(self, output_file: str = "nifi_processor_summary.csv"):
+        """Export processor summary in a clean table format for spreadsheet viewing."""
         import csv
         
         if not self.processors:
@@ -349,9 +349,12 @@ class NiFiFlowParser:
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
-                    'processor_name', 'processor_id', 'processor_type', 'processor_class', 
-                    'group_location', 'concurrent_tasks', 'scheduling_period', 
-                    'auto_terminated_relationships', 'property_name', 'property_value'
+                    'Processor_Name', 'Processor_ID', 'Processor_Type', 'Full_Class_Name',
+                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period', 
+                    'Auto_Terminated_Relationships', 'Key_Config_1_Name', 'Key_Config_1_Value',
+                    'Key_Config_2_Name', 'Key_Config_2_Value', 'Key_Config_3_Name', 'Key_Config_3_Value',
+                    'Key_Config_4_Name', 'Key_Config_4_Value', 'Key_Config_5_Name', 'Key_Config_5_Value',
+                    'Total_Properties_Count', 'All_Properties_JSON'
                 ]
                 
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -359,34 +362,192 @@ class NiFiFlowParser:
                 
                 for proc in self.processors:
                     proc_type = proc['type'].split('.')[-1]  # Just the class name
-                    base_row = {
-                        'processor_name': proc['name'],
-                        'processor_id': proc['id'],
-                        'processor_type': proc_type,
-                        'processor_class': proc['type'],
-                        'group_location': proc['group'],
-                        'concurrent_tasks': proc['concurrent_tasks'],
-                        'scheduling_period': proc['scheduling_period'],
-                        'auto_terminated_relationships': '; '.join(proc['auto_terminated_relationships']),
+                    
+                    # Get key properties for this processor type
+                    key_props = self.get_key_properties_for_processor(proc_type, proc['properties'])
+                    key_props_list = list(key_props.items())
+                    
+                    row = {
+                        'Processor_Name': proc['name'],
+                        'Processor_ID': proc['id'],
+                        'Processor_Type': proc_type,
+                        'Full_Class_Name': proc['type'],
+                        'Group_Location': proc['group'],
+                        'Concurrent_Tasks': proc['concurrent_tasks'],
+                        'Scheduling_Period': proc['scheduling_period'],
+                        'Auto_Terminated_Relationships': '; '.join(proc['auto_terminated_relationships']),
+                        'Total_Properties_Count': len(proc['properties']),
+                        'All_Properties_JSON': json.dumps(proc['properties']) if proc['properties'] else '{}'
                     }
                     
-                    # Create one row per property
-                    if proc['properties']:
-                        for prop_name, prop_value in proc['properties'].items():
-                            row = base_row.copy()
-                            row['property_name'] = prop_name
-                            row['property_value'] = str(prop_value) if prop_value is not None else ''
-                            writer.writerow(row)
-                    else:
-                        # If no properties, still write the processor info
-                        row = base_row.copy()
-                        row['property_name'] = ''
-                        row['property_value'] = ''
-                        writer.writerow(row)
+                    # Add up to 5 key configurations as separate columns
+                    for i in range(5):
+                        config_name_key = f'Key_Config_{i+1}_Name'
+                        config_value_key = f'Key_Config_{i+1}_Value'
+                        
+                        if i < len(key_props_list):
+                            prop_name, prop_value = key_props_list[i]
+                            row[config_name_key] = prop_name
+                            
+                            # Handle sensitive properties
+                            if any(sensitive in prop_name.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                                row[config_value_key] = "***SENSITIVE***" if prop_value else "Not Set"
+                            else:
+                                row[config_value_key] = str(prop_value) if prop_value is not None else ''
+                        else:
+                            row[config_name_key] = ''
+                            row[config_value_key] = ''
+                    
+                    writer.writerow(row)
             
-            print(f"Detailed processor information exported to: {output_file}")
+            print(f"✅ Processor summary exported to: {output_file}")
+            print(f"📊 This CSV contains one row per processor with key configurations in columns")
+            
         except Exception as e:
-            print(f"Error exporting to CSV: {e}")
+            print(f"❌ Error exporting summary CSV: {e}")
+
+    def export_focused_processors_csv(self, output_file: str = "nifi_key_processors.csv"):
+        """Export only the key processor types (MergeContent, FetchS3Object, etc.) in a focused table."""
+        import csv
+        
+        if not self.processors:
+            print("No processors to export.")
+            return
+        
+        # Focus on key processor types
+        focus_processors = [
+            'MergeContent', 'FetchS3Object', 'PutS3Object', 'GetFile', 'PutFile',
+            'InvokeHTTP', 'ExecuteScript', 'ExecuteStreamCommand', 'SplitText', 
+            'SplitJson', 'SplitXml', 'RouteOnAttribute', 'RouteOnContent', 'UpdateAttribute', 
+            'ReplaceText', 'ExtractText', 'ConvertRecord', 'QueryRecord', 
+            'PublishKafka', 'ConsumeKafka', 'Wait', 'Notify', 'GenerateFlowFile'
+        ]
+        
+        # Filter processors to only include focus types
+        filtered_processors = []
+        for proc in self.processors:
+            proc_type = proc['type'].split('.')[-1]
+            for focus_type in focus_processors:
+                if focus_type.lower() in proc_type.lower():
+                    filtered_processors.append(proc)
+                    break
+        
+        if not filtered_processors:
+            print("❌ No key processors found to export.")
+            return
+        
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = [
+                    'Processor_Type', 'Name', 'ID', 'Group_Location', 
+                    'Concurrent_Tasks', 'Scheduling_Period', 'Config_1', 'Value_1',
+                    'Config_2', 'Value_2', 'Config_3', 'Value_3', 'Config_4', 'Value_4',
+                    'Config_5', 'Value_5', 'Config_6', 'Value_6', 'Total_Props'
+                ]
+                
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for proc in filtered_processors:
+                    proc_type = proc['type'].split('.')[-1]
+                    key_props = self.get_key_properties_for_processor(proc_type, proc['properties'])
+                    key_props_list = list(key_props.items())
+                    
+                    row = {
+                        'Processor_Type': proc_type,
+                        'Name': proc['name'],
+                        'ID': proc['id'],
+                        'Group_Location': proc['group'],
+                        'Concurrent_Tasks': proc['concurrent_tasks'],
+                        'Scheduling_Period': proc['scheduling_period'],
+                        'Total_Props': len(proc['properties'])
+                    }
+                    
+                    # Add up to 6 key configurations
+                    for i in range(6):
+                        config_key = f'Config_{i+1}'
+                        value_key = f'Value_{i+1}'
+                        
+                        if i < len(key_props_list):
+                            prop_name, prop_value = key_props_list[i]
+                            row[config_key] = prop_name
+                            
+                            # Handle sensitive properties and long values
+                            if any(sensitive in prop_name.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                                row[value_key] = "***SENSITIVE***" if prop_value else "Not Set"
+                            else:
+                                # Truncate very long values for CSV readability
+                                str_value = str(prop_value) if prop_value is not None else ''
+                                row[value_key] = str_value[:200] + "..." if len(str_value) > 200 else str_value
+                        else:
+                            row[config_key] = ''
+                            row[value_key] = ''
+                    
+                    writer.writerow(row)
+            
+            print(f"✅ Key processors exported to: {output_file}")
+            print(f"📊 Found {len(filtered_processors)} key processors out of {len(self.processors)} total")
+            
+        except Exception as e:
+            print(f"❌ Error exporting focused CSV: {e}")
+
+    def export_properties_matrix_csv(self, output_file: str = "nifi_properties_matrix.csv"):
+        """Export a matrix view where each property is a column - great for comparing similar processors."""
+        import csv
+        
+        if not self.processors:
+            print("No processors to export.")
+            return
+        
+        # Collect all unique property names across all processors
+        all_properties = set()
+        for proc in self.processors:
+            all_properties.update(proc['properties'].keys())
+        
+        all_properties = sorted(all_properties)
+        
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+                # Create fieldnames with processor info + all properties as columns
+                fieldnames = [
+                    'Processor_Name', 'Processor_ID', 'Processor_Type', 
+                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period'
+                ] + all_properties
+                
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for proc in self.processors:
+                    proc_type = proc['type'].split('.')[-1]
+                    
+                    row = {
+                        'Processor_Name': proc['name'],
+                        'Processor_ID': proc['id'],
+                        'Processor_Type': proc_type,
+                        'Group_Location': proc['group'],
+                        'Concurrent_Tasks': proc['concurrent_tasks'],
+                        'Scheduling_Period': proc['scheduling_period']
+                    }
+                    
+                    # Add each property as a column
+                    for prop_name in all_properties:
+                        prop_value = proc['properties'].get(prop_name, '')
+                        
+                        # Handle sensitive properties
+                        if any(sensitive in prop_name.lower() for sensitive in ['password', 'secret', 'key', 'credential']):
+                            row[prop_name] = "***SENSITIVE***" if prop_value else ""
+                        else:
+                            # Truncate very long values
+                            str_value = str(prop_value) if prop_value else ''
+                            row[prop_name] = str_value[:100] + "..." if len(str_value) > 100 else str_value
+                    
+                    writer.writerow(row)
+            
+            print(f"✅ Properties matrix exported to: {output_file}")
+            print(f"📊 Matrix has {len(all_properties)} property columns across {len(self.processors)} processors")
+            
+        except Exception as e:
+            print(f"❌ Error exporting properties matrix: {e}")
     
     def create_processor_inventory(self):
         """Create a focused inventory of specific processor types and their key configs."""
@@ -474,8 +635,8 @@ def main():
         print("\nThis script will:")
         print("  • Parse your NiFi JSON export file")
         print("  • Focus on key processors like MergeContent, FetchS3Object, etc.")
+        print("  • Export multiple CSV formats for spreadsheet analysis")
         print("  • Show processor IDs and key configurations")
-        print("  • Export detailed CSV for analysis")
         sys.exit(1)
     
     json_file_path = sys.argv[1]
@@ -501,15 +662,9 @@ def main():
     
     print(f"\n✅ SUCCESS: Found {len(processors)} processors!")
     
-    # Create focused processor inventory
-    parser.create_processor_inventory()
-    
-    # Print detailed summary
-    parser.print_processor_summary()
-    
-    # Show processor types
+    # Show processor types summary
     print(f"\n{'=' * 60}")
-    print("ALL PROCESSOR TYPES FOUND:")
+    print("PROCESSOR TYPES FOUND:")
     print(f"{'=' * 60}")
     processor_types = {}
     for proc in processors:
@@ -523,12 +678,42 @@ def main():
         count = processor_types[proc_type]
         print(f"  • {proc_type}: {count} instance{'s' if count != 1 else ''}")
     
-    # Export detailed CSV
-    parser.export_processor_details_csv()
+    # Export multiple CSV formats
+    print(f"\n{'=' * 60}")
+    print("EXPORTING CSV FILES:")
+    print(f"{'=' * 60}")
+    
+    # 1. Summary CSV - One row per processor with key configs in columns
+    parser.export_processor_summary_csv("nifi_processor_summary.csv")
+    
+    # 2. Focused CSV - Only key processors (MergeContent, FetchS3Object, etc.)
+    parser.export_focused_processors_csv("nifi_key_processors.csv")
+    
+    # 3. Properties Matrix - All properties as columns (good for comparing similar processors)
+    parser.export_properties_matrix_csv("nifi_properties_matrix.csv")
+    
+    # Brief console summary
+    focus_processors = [
+        'MergeContent', 'FetchS3Object', 'PutS3Object', 'GetFile', 'PutFile',
+        'InvokeHTTP', 'ExecuteScript', 'SplitText', 'RouteOnAttribute', 'UpdateAttribute'
+    ]
+    
+    found_focus = 0
+    for proc in processors:
+        proc_type = proc['type'].split('.')[-1]
+        for focus_type in focus_processors:
+            if focus_type.lower() in proc_type.lower():
+                found_focus += 1
+                break
     
     print(f"\n🎉 Analysis complete!")
-    print(f"📊 Total processors analyzed: {len(processors)}")
-    print(f"📁 Detailed CSV exported for further analysis")
+    print(f"📊 Total processors: {len(processors)}")
+    print(f"🎯 Key processors found: {found_focus}")
+    print(f"\n📁 Generated CSV files:")
+    print(f"  • nifi_processor_summary.csv - Main summary with key configs")
+    print(f"  • nifi_key_processors.csv - Only important processor types")
+    print(f"  • nifi_properties_matrix.csv - All properties as columns")
+    print(f"\n💡 Open these CSV files in Excel/Google Sheets for easy analysis!")
 
 
 if __name__ == "__main__":
