@@ -75,16 +75,15 @@ class NiFiFlowParser:
         try:
             with open(self.json_file_path, 'r', encoding='utf-8') as file:
                 self.flow_data = json.load(file)
-            print(f"Successfully loaded JSON file: {self.json_file_path}")
             return True
         except FileNotFoundError:
-            print(f"Error: File not found - {self.json_file_path}")
+            print(f"❌ Error: File not found - {self.json_file_path}")
             return False
         except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON format - {e}")
+            print(f"❌ Error: Invalid JSON format - {e}")
             return False
         except Exception as e:
-            print(f"Error loading file: {e}")
+            print(f"❌ Error loading file: {e}")
             return False
     
     def extract_processors_from_group(self, process_group: Dict[str, Any], group_name: str = "Root") -> List[Dict]:
@@ -299,7 +298,6 @@ class NiFiFlowParser:
         if isinstance(data, dict):
             # Check if this dict contains processors
             if 'processors' in data and isinstance(data['processors'], list):
-                print(f"Found {len(data['processors'])} processors at: {path}")
                 for processor in data['processors']:
                     processor_info = self.parse_processor(processor, path)
                     processors.append(processor_info)
@@ -321,45 +319,36 @@ class NiFiFlowParser:
     def parse_flow(self) -> List[Dict]:
         """Parse the entire flow and extract all processors."""
         if not self.flow_data:
-            print("No flow data loaded. Please load JSON first.")
+            print("❌ No flow data loaded. Please load JSON first.")
             return []
-        
-        # First, analyze the structure
-        self.analyze_json_structure()
         
         processors = []
         
         # Handle known JSON structures first
         if 'flowContents' in self.flow_data:
-            print("Detected: NiFi Template export format")
             flow_contents = self.flow_data['flowContents']
             processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'processGroupFlow' in self.flow_data:
-            print("Detected: Process Group export format")
             flow_contents = self.flow_data['processGroupFlow']['flow']
             processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'versionedFlowSnapshot' in self.flow_data:
-            print("Detected: Registry versioned flow format")
             flow_contents = self.flow_data['versionedFlowSnapshot']['flowContents']
             processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'flow' in self.flow_data:
-            print("Detected: Flow export format")
             flow_contents = self.flow_data['flow']
             processors = self.extract_processors_from_group(flow_contents, "Root")
         elif 'processors' in self.flow_data:
-            print("Detected: Direct processor list format")
             for processor in self.flow_data['processors']:
                 processor_info = self.parse_processor(processor, "Root")
                 processors.append(processor_info)
         else:
-            print("Unknown format - attempting recursive search...")
+            # Try recursive search as fallback
             processors = self.find_processors_recursively(self.flow_data)
         
         if not processors:
-            print("No processors found with standard parsing. Trying recursive search...")
+            # Final attempt with recursive search
             processors = self.find_processors_recursively(self.flow_data)
         
-        print(f"Total processors found: {len(processors)}")
         self.processors = processors
         return processors
     
@@ -489,7 +478,7 @@ class NiFiFlowParser:
         import csv
         
         if not self.processors:
-            print("No processors to export.")
+            print("❌ No processors to export.")
             return
         
         try:
@@ -544,19 +533,19 @@ class NiFiFlowParser:
                     
                     writer.writerow(row)
             
-            print(f"✅ Processor summary exported to: {output_file}")
-            print(f"📊 This CSV contains one row per processor with key configurations in columns")
+            return True
             
         except Exception as e:
             print(f"❌ Error exporting summary CSV: {e}")
+            return False
 
     def export_focused_processors_csv(self, output_file: str = "nifi_key_processors.csv"):
         """Export only the key processor types (MergeContent, FetchS3Object, etc.) in a focused table."""
         import csv
         
         if not self.processors:
-            print("No processors to export.")
-            return
+            print("❌ No processors to export.")
+            return False
         
         # Focus on key processor types
         focus_processors = [
@@ -578,7 +567,7 @@ class NiFiFlowParser:
         
         if not filtered_processors:
             print("❌ No key processors found to export.")
-            return
+            return False
         
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
@@ -625,11 +614,11 @@ class NiFiFlowParser:
                     
                     writer.writerow(row)
             
-            print(f"✅ Key processors exported to: {output_file}")
-            print(f"📊 Found {len(filtered_processors)} key processors out of {len(self.processors)} total")
+            return True
             
         except Exception as e:
             print(f"❌ Error exporting focused CSV: {e}")
+            return False
 
     def export_properties_matrix_csv(self, output_file: str = "nifi_properties_matrix.csv"):
         """Export a matrix view where each property is a column - great for comparing similar processors."""
@@ -681,11 +670,11 @@ class NiFiFlowParser:
                     
                     writer.writerow(row)
             
-            print(f"✅ Properties matrix exported to: {output_file}")
-            print(f"📊 Matrix has {len(all_properties)} property columns across {len(self.processors)} processors")
+            return True
             
         except Exception as e:
             print(f"❌ Error exporting properties matrix: {e}")
+            return False
     
     def create_processor_inventory(self):
         """Create a focused inventory of specific processor types and their key configs."""
