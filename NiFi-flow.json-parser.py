@@ -1,36 +1,37 @@
 import json
 
-# Load JSON data from a file (replace 'flow.json.nice' with your filename)
-with open('flow.json.nice') as f:
-    data = json.load(f)
+def parse_nifi_flow_json(file_path):
+    """
+    Parses a NiFi flow.json file and returns its content as a Python dictionary.
 
-# Function to get the first record (element) from each top-level key if value is list/array
-def first_records_per_key(json_obj):
-    result = {}
-    for key, value in json_obj.items():
-        if isinstance(value, list) and value:
-            result[key] = value[0]
-        else:
-            # Either not a list or empty list; include as is or None
-            result[key] = value if not isinstance(value, list) else None
-    return result
+    Args:
+        file_path (str): The path to the flow.json file.
 
-first_records = first_records_per_key(data)
-print("First record for each key:")
-print(json.dumps(first_records, indent=2))
+    Returns:
+        dict: The content of the flow.json file as a dictionary, or None if an error occurs.
+    """
+    try:
+        with open(file_path, 'r') as file:
+            flow_data = json.load(file)
+            return flow_data
+    except FileNotFoundError:
+        print(f"Error: The file '{file_path}' was not found.")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON from '{file_path}': {e}")
+        return None
 
-# Example: Filter controllerServices by name == "MergeContent"
-controller_services = data.get('controllerServices', [])
-filtered = [
-    {
-        'id': item.get('id'),
-        'name': item.get('name'),
-        'state': item.get('state'),
-        'properties': item.get('config', {}).get('properties')
-    }
-    for item in controller_services
-    if item.get('name') == 'MergeContent'
-]
+# Example usage:
+flow_file_path = 'path/to/your/flow.json' # Replace with the actual path to your flow.json file
+flow_config = parse_nifi_flow_json(flow_file_path)
 
-print("\nFiltered 'MergeContent' records in 'controllerServices':")
-print(json.dumps(filtered, indent=2))
+if flow_config:
+    # Now you can access different parts of the NiFi flow configuration
+    # For instance, print the processors within the flow:
+    if 'flow' in flow_config and 'processors' in flow_config['flow']:
+        print("Processors in the NiFi flow:")
+        for processor in flow_config['flow']['processors']:
+            print(f"- Name: {processor['name']}, Type: {processor['type']}") 
+
+    # You can explore other elements like connections, controller services, etc.
+
