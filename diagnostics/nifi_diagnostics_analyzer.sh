@@ -57,7 +57,7 @@ SEVERITY_FILTER="$DEFAULT_SEVERITY"
 CATEGORY_FILTER="$DEFAULT_CATEGORY"
 VERBOSE=false
 EXPORT_FILE=""
-DIAGNOSTICS_ZIP=""
+DIAGNOSTICS_FILE=""
 
 # Analysis results arrays
 declare -a CRITICAL_ISSUES=()
@@ -126,39 +126,20 @@ log_success() {
 }
 
 cleanup() {
-    if [[ -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -d "$DIAGNOSTICS_FILE" ]]; then
+        rm -rf "$DIAGNOSTICS_FILE"
     fi
 }
 
 # Set up cleanup on exit
 trap cleanup EXIT
 
-extract_diagnostics() {
-    local zip_file=$1
-    
-    log_info "Extracting diagnostics archive..."
-    
-    if ! command -v unzip >/dev/null 2>&1; then
-        log_error "unzip command not found. Please install unzip utility."
-        exit 1
-    fi
-    
-    mkdir -p "$TEMP_DIR"
-    
-    if ! unzip -q "$zip_file" -d "$TEMP_DIR"; then
-        log_error "Failed to extract ZIP file. File may be corrupted."
-        exit 1
-    fi
-    
-    log_success "Diagnostics extracted to temporary directory"
-}
 
 analyze_system_info() {
     log_info "Analyzing system information..."
     
     local system_info_file
-    system_info_file=$(find "$TEMP_DIR" -name "*system-diagnostics*" -o -name "*system.txt" | head -1)
+    system_info_file=$(find "$DIAGNOSTICS_FILE" -name "*system-diagnostics*" -o -name "*system.txt" | head -1)
     
     if [[ -f "$system_info_file" ]]; then
         # Check available memory
@@ -187,7 +168,7 @@ analyze_nifi_properties() {
     log_info "Analyzing NiFi configuration..."
     
     local nifi_props
-    nifi_props=$(find "$TEMP_DIR" -name "nifi.properties" | head -1)
+    nifi_props=$(find "$DIAGNOSTICS_FILE" -name "nifi.properties" | head -1)
     
     if [[ -f "$nifi_props" ]]; then
         # Check JVM memory settings
@@ -257,7 +238,7 @@ analyze_bootstrap_conf() {
     log_info "Analyzing bootstrap configuration..."
     
     local bootstrap_conf
-    bootstrap_conf=$(find "$TEMP_DIR" -name "bootstrap.conf" | head -1)
+    bootstrap_conf=$(find "$DIAGNOSTICS_FILE" -name "bootstrap.conf" | head -1)
     
     if [[ -f "$bootstrap_conf" ]]; then
         # Check JVM arguments
@@ -288,7 +269,7 @@ analyze_logs() {
     log_info "Analyzing log files..."
     
     local app_log
-    app_log=$(find "$TEMP_DIR" -name "*nifi-app*log*" | head -1)
+    app_log=$(find "$DIAGNOSTICS_FILE" -name "*nifi-app*log*" | head -1)
     
     if [[ -f "$app_log" ]]; then
         # Check for common error patterns
@@ -339,7 +320,7 @@ analyze_thread_dump() {
     log_info "Analyzing thread dumps..."
     
     local thread_dump
-    thread_dump=$(find "$TEMP_DIR" -name "*thread*dump*" -o -name "*threads*" | head -1)
+    thread_dump=$(find "$DIAGNOSTICS_FILE" -name "*thread*dump*" -o -name "*threads*" | head -1)
     
     if [[ -f "$thread_dump" ]]; then
         # Check for blocked threads
@@ -368,7 +349,7 @@ analyze_flow_configuration() {
     log_info "Analyzing flow configuration..."
     
     local flow_xml
-    flow_xml=$(find "$TEMP_DIR" -name "flow.xml*" -o -name "*flow.json*" | head -1)
+    flow_xml=$(find "$DIAGNOSTICS_FILE" -name "flow.xml*" -o -name "*flow.json*" | head -1)
     
     if [[ -f "$flow_xml" ]]; then
         # Count processors
@@ -619,8 +600,8 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            if [[ -z "$DIAGNOSTICS_ZIP" ]]; then
-                DIAGNOSTICS_ZIP="$1"
+            if [[ -z "$DIAGNOSTICS_FILE" ]]; then
+                DIAGNOSTICS_FILE="$1"
             else
                 log_error "Multiple diagnostic files specified. Please provide only one."
                 exit 1
@@ -631,22 +612,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate inputs
-if [[ -z "$DIAGNOSTICS_ZIP" ]]; then
+if [[ -z "$DIAGNOSTICS_FILE" ]]; then
     log_error "No diagnostic ZIP file specified."
     echo "Use --help for usage information."
     exit 1
 fi
 
-if [[ ! -f "$DIAGNOSTICS_ZIP" ]]; then
-    log_error "Diagnostic file not found: $DIAGNOSTICS_ZIP"
+if [[ ! -f "$DIAGNOSTICS_FILE" ]]; then
+    log_error "Diagnostic file not found: $DIAGNOSTICS_FILE"
     exit 1
 fi
 
 # Main execution
 log_info "Starting NiFi diagnostics analysis..."
-log_info "Analyzing file: $DIAGNOSTICS_ZIP"
+log_info "Analyzing file: $DIAGNOSTICS_FILE"
 
-extract_diagnostics "$DIAGNOSTICS_ZIP"
+DIAGNOSTICS_FILE="$DIAGNOSTICS_FILE"
 
 # Run analysis functions
 analyze_system_info
@@ -665,3 +646,4 @@ else
 fi
 
 log_success "Analysis complete!"
+

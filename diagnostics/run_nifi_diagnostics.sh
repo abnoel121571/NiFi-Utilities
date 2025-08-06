@@ -223,21 +223,12 @@ echo "   - Read timeout: ${READ_TIMEOUT}s"
 echo "   - Socket timeout: ${SOCKET_TIMEOUT}s"
 
 # 6. Generate a unique, timestamped filename for the diagnostics bundle.
-DIAG_FILE="/tmp/cloudera-nifi-diag-$(hostname)-$(date +'%Y_%m_%d_%H_%M').zip"
+# 6. Generate a unique, timestamped filename for the diagnostics output (plain text)
+DIAG_FILE="./cloudera-nifi-diag-$(hostname)-$(date +'%Y_%m_%d_%H_%M').txt"
 echo "   - Diagnostics will be saved to: $DIAG_FILE"
-
-# Check available disk space
-AVAILABLE_SPACE_KB=$(df /tmp | awk 'NR==2 {print $4}')
-AVAILABLE_SPACE_MB=$((AVAILABLE_SPACE_KB / 1024))
-if [ "$AVAILABLE_SPACE_MB" -lt 1024 ]; then
-    echo "⚠️  WARNING: Only ${AVAILABLE_SPACE_MB}MB available in /tmp. Diagnostics may require significant space."
-fi
 
 # --- Execution ---
 
-# 7. Execute the diagnostics command as the specified NIFI_USER.
-#    We export all necessary environment variables to give the nifi.sh
-#    script and its underlying Java process the complete, correct environment.
 echo "   - Running the diagnostics command as user '$NIFI_USER'..."
 
 # Use timeout command to enforce overall execution timeout
@@ -249,44 +240,15 @@ COMMAND_TO_RUN="export NIFI_HOME='${NIFI_HOME_PATH}'; \
                 export NIFI_PID_DIR='${NIFI_PROC_DIR}'; \
                 export JAVA_HOME='${MY_JAVA_HOME}'; \
                 export JAVA_OPTS='${FINAL_JAVA_OPTS}'; \
-                timeout ${OVERALL_TIMEOUT} '${NIFI_BIN_PATH}/nifi.sh' diagnostics --verbose '${DIAG_FILE}'"
+                timeout ${OVERALL_TIMEOUT} '${NIFI_BIN_PATH}/nifi.sh' diagnostics"
 
 echo "   - Using JAVA_OPTS: $FINAL_JAVA_OPTS"
 echo "   - Overall execution timeout: ${OVERALL_TIMEOUT}s"
 
-# Execute with proper error handling
-if sudo -u "$NIFI_USER" bash -c "${COMMAND_TO_RUN}"; then
-    # Check if the command was terminated by timeout
-    if [ $? -eq 124 ]; then
-        echo "❌ ERROR: Diagnostics collection timed out after ${OVERALL_TIMEOUT} seconds."
-        echo "   Consider increasing timeout values or checking NiFi connectivity."
-        exit 1
-    fi
-    
-    # Final check to ensure the zip file is valid and not empty
-    if [ -s "${DIAG_FILE}" ]; then
-        # Validate zip file if unzip is available
-        if command -v unzip >/dev/null 2>&1; then
-            if unzip -t "${DIAG_FILE}" >/dev/null 2>&1; then
-                FILE_SIZE=$(du -h "${DIAG_FILE}" | cut -f1)
-                echo "✅ SUCCESS: NiFi diagnostics collection complete."
-                echo "   Output file: ${DIAG_FILE} (${FILE_SIZE})"
-                echo "   File validated successfully."
-            else
-                echo "⚠️  WARNING: Diagnostics file created but may be corrupted."
-                echo "   File location: ${DIAG_FILE}"
-            fi
-        else
-            FILE_SIZE=$(du -h "${DIAG_FILE}" | cut -f1)
-            echo "✅ SUCCESS: NiFi diagnostics collection complete."
-            echo "   Output file: ${DIAG_FILE} (${FILE_SIZE})"
-            echo "   (Install 'unzip' to validate file integrity)"
-        fi
-    else
-        echo "❌ ERROR: The diagnostics command completed but produced an empty or invalid file."
-        echo "   The file at ${DIAG_FILE} is empty or missing."
-        exit 1
-    fi
+# Run the diagnostics command and redirect output to the text file
+if sudo -u "$NIFI_USER" bash -c "${COMMAND_TO_RUN}" > "${DIAG_FILE}" 2>&1; then
+    echo "✅ SUCCESS: NiFi diagnostics collection complete."
+    echo "   Output file: $DIAG_FILE"
 else
     EXIT_CODE=$?
     if [ $EXIT_CODE -eq 124 ]; then
@@ -294,10 +256,9 @@ else
         echo "   Try increasing timeout values with --socket-timeout option."
     else
         echo "❌ ERROR: The nifi.sh diagnostics command failed with exit code $EXIT_CODE."
-        echo "   Please check the output above for errors."
+        echo "   Please check the output in $DIAG_FILE for details."
     fi
     exit 1
 fi
 
-echo "   - To extract and examine: unzip -l '${DIAG_FILE}'"
 exit 0

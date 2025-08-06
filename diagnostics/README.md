@@ -55,10 +55,10 @@ sudo ./run_nifi_diagnostics.sh --timeout 60 --read-timeout 120
 ### 3. Analyze Results
 ```bash
 # Basic analysis
-./nifi_diagnostics_analyzer.sh /tmp/cloudera-nifi-diag-hostname-2025_08_06_14_30.zip
+./nifi_diagnostics_analyzer.sh ./cloudera-nifi-diag-hostname-2025_08_06_14_30.txt
 
 # Generate HTML report
-./nifi_diagnostics_analyzer.sh diagnostics.zip --output-format html --export report.html
+./nifi_diagnostics_analyzer.sh diagnostics.txt --output-format html --export report.html
 ```
 
 ## 🛠 Detailed Usage
@@ -101,7 +101,7 @@ sudo ./run_nifi_diagnostics.sh --custom-java-opts "-Xmx4g -XX:+UseG1GC"
 
 #### Command Line Options
 ```bash
-./nifi_diagnostics_analyzer.sh <diagnostics.zip> [options]
+./nifi_diagnostics_analyzer.sh <diagnostics.txt|diagnostics.zip> [options]
 
 Options:
   --output-format [text|json|html]     Output format (default: text)
@@ -115,20 +115,20 @@ Options:
 #### Examples
 ```bash
 # Basic text analysis
-./nifi_diagnostics_analyzer.sh diagnostics.zip
+./nifi_diagnostics_analyzer.sh diagnostics.txt
 
 # Critical issues only
-./nifi_diagnostics_analyzer.sh diagnostics.zip --severity critical
+./nifi_diagnostics_analyzer.sh diagnostics.txt --severity critical
 
 # Performance analysis with HTML export
-./nifi_diagnostics_analyzer.sh diagnostics.zip \
+./nifi_diagnostics_analyzer.sh diagnostics.txt \
   --category performance \
   --output-format html \
   --export performance-report.html \
   --verbose
 
 # JSON output for automation
-./nifi_diagnostics_analyzer.sh diagnostics.zip \
+./nifi_diagnostics_analyzer.sh diagnostics.txt \
   --output-format json \
   --export results.json
 ```
@@ -456,8 +456,8 @@ chmod +x *.sh
 ### Analysis Script Requirements
 - **OS**: Any modern Linux distribution
 - **Memory**: 512MB available RAM
-- **Disk**: 1GB free space for extraction
-- **Tools**: `unzip`, `bash` 4.0+
+- **Disk**: 1GB free space (no extraction needed for text input)
+- **Tools**: `bash` 4.0+ (optional: `unzip` for ZIP input)
 - **Optional**: `jq` for JSON processing
 
 ## 🔐 Security Considerations
@@ -528,3 +528,4 @@ For enterprise support and consulting:
 **Compatibility**: Cloudera Manager 6.x+, NiFi 1.11.0+
 
 For the latest updates and releases, visit: [GitHub Repository](https://github.com/your-org/nifi-diagnostics-toolkit)
+
