@@ -58,12 +58,16 @@ class NiFiFlowParser:
     
     def parse_processor(self, processor: Dict[str, Any], group_name: str) -> Dict[str, Any]:
         """Parse individual processor and extract configuration."""
+        # Determine processor state/status
+        processor_state = self.get_processor_state(processor)
+        
         processor_info = {
             'id': processor.get('identifier', processor.get('id', 'Unknown')),
             'name': processor.get('name', 'Unnamed Processor'),
             'type': processor.get('type', processor.get('class', 'Unknown Type')),
             'group': group_name,
-            'state': processor.get('schedulingStrategy', processor.get('state', 'Unknown')),
+            'state': processor_state,  # RUNNING, STOPPED, DISABLED
+            'scheduling_strategy': processor.get('schedulingStrategy', 'Unknown'),
             'concurrent_tasks': processor.get('concurrentlySchedulableTaskCount', processor.get('maxConcurrentTasks', 1)),
             'scheduling_period': processor.get('schedulingPeriod', processor.get('runSchedule', 'Unknown')),
             'penalty_duration': processor.get('penaltyDuration', 'Unknown'),
@@ -113,6 +117,81 @@ class NiFiFlowParser:
                     processor_info['properties'] = config['properties']
         
         return processor_info
+    
+    def get_processor_state(self, processor: Dict[str, Any]) -> str:
+        """Determine the processor state (RUNNING, STOPPED, DISABLED)."""
+        # Check different possible locations for state information
+        state = "UNKNOWN"
+        
+        # Method 1: Direct state field
+        if 'state' in processor:
+            state = processor['state']
+        
+        # Method 2: Inside component wrapper
+        elif 'component' in processor:
+            component = processor['component']
+            if 'state' in component:
+                state = component['state']
+            elif 'config' in component and 'schedulingStrategy' in component['config']:
+                # Sometimes disabled processors have different scheduling info
+                if component['config'].get('schedulingStrategy') == 'DISABLED':
+                    state = "DISABLED"
+        
+        # Method 3: Check status field
+        elif 'status' in processor:
+            status = processor['status']
+            if isinstance(status, dict):
+                state = status.get('runStatus', status.get('aggregateSnapshot', {}).get('runStatus', 'UNKNOWN'))
+            else:
+                state = str(status)
+        
+        # Method 4: Check runStatus in various nested locations
+        elif 'runStatus' in processor:
+            state = processor['runStatus']
+        
+        # Method 5: Look for status in nested structures
+        else:
+            # Check common nested paths
+            nested_paths = [
+                ['status', 'runStatus'],
+                ['status', 'aggregateSnapshot', 'runStatus'],
+                ['component', 'status', 'runStatus'],
+                ['component', 'runStatus'],
+                ['config', 'schedulingStrategy']
+            ]
+            
+            for path in nested_paths:
+                current = processor
+                try:
+                    for key in path:
+                        current = current[key]
+                    if current:
+                        state = current
+                        break
+                except (KeyError, TypeError):
+                    continue
+        
+        # Normalize the state value
+        if isinstance(state, str):
+            state = state.upper()
+            
+            # Map various state representations to standard values
+            state_mapping = {
+                'RUNNING': 'RUNNING',
+                'RUN': 'RUNNING',
+                'STARTED': 'RUNNING',
+                'START': 'RUNNING',
+                'STOPPED': 'STOPPED',
+                'STOP': 'STOPPED',
+                'DISABLED': 'DISABLED',
+                'INVALID': 'DISABLED',
+                'VALIDATING': 'STOPPED',
+                'VALID': 'STOPPED'  # Valid but not necessarily running
+            }
+            
+            return state_mapping.get(state, state)
+        
+        return "UNKNOWN"
     
     def analyze_json_structure(self):
         """Analyze and print the JSON structure to help with debugging."""
@@ -349,8 +428,8 @@ class NiFiFlowParser:
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
-                    'Processor_Name', 'Processor_ID', 'Processor_Type', 'Full_Class_Name',
-                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period', 
+                    'Processor_Name', 'Processor_ID', 'Processor_Type', 'Status', 'Full_Class_Name',
+                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period', 'Scheduling_Strategy',
                     'Auto_Terminated_Relationships', 'Key_Config_1_Name', 'Key_Config_1_Value',
                     'Key_Config_2_Name', 'Key_Config_2_Value', 'Key_Config_3_Name', 'Key_Config_3_Value',
                     'Key_Config_4_Name', 'Key_Config_4_Value', 'Key_Config_5_Name', 'Key_Config_5_Value',
@@ -371,10 +450,12 @@ class NiFiFlowParser:
                         'Processor_Name': proc['name'],
                         'Processor_ID': proc['id'],
                         'Processor_Type': proc_type,
+                        'Status': proc['state'],
                         'Full_Class_Name': proc['type'],
                         'Group_Location': proc['group'],
                         'Concurrent_Tasks': proc['concurrent_tasks'],
                         'Scheduling_Period': proc['scheduling_period'],
+                        'Scheduling_Strategy': proc['scheduling_strategy'],
                         'Auto_Terminated_Relationships': '; '.join(proc['auto_terminated_relationships']),
                         'Total_Properties_Count': len(proc['properties']),
                         'All_Properties_JSON': json.dumps(proc['properties']) if proc['properties'] else '{}'
@@ -439,8 +520,8 @@ class NiFiFlowParser:
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
-                    'Processor_Type', 'Name', 'ID', 'Group_Location', 
-                    'Concurrent_Tasks', 'Scheduling_Period', 'Config_1', 'Value_1',
+                    'Processor_Type', 'Status', 'Name', 'ID', 'Group_Location', 
+                    'Concurrent_Tasks', 'Scheduling_Period', 'Scheduling_Strategy', 'Config_1', 'Value_1',
                     'Config_2', 'Value_2', 'Config_3', 'Value_3', 'Config_4', 'Value_4',
                     'Config_5', 'Value_5', 'Config_6', 'Value_6', 'Total_Props'
                 ]
@@ -455,11 +536,13 @@ class NiFiFlowParser:
                     
                     row = {
                         'Processor_Type': proc_type,
+                        'Status': proc['state'],
                         'Name': proc['name'],
                         'ID': proc['id'],
                         'Group_Location': proc['group'],
                         'Concurrent_Tasks': proc['concurrent_tasks'],
                         'Scheduling_Period': proc['scheduling_period'],
+                        'Scheduling_Strategy': proc['scheduling_strategy'],
                         'Total_Props': len(proc['properties'])
                     }
                     
@@ -510,8 +593,8 @@ class NiFiFlowParser:
             with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
                 # Create fieldnames with processor info + all properties as columns
                 fieldnames = [
-                    'Processor_Name', 'Processor_ID', 'Processor_Type', 
-                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period'
+                    'Processor_Name', 'Processor_ID', 'Processor_Type', 'Status', 
+                    'Group_Location', 'Concurrent_Tasks', 'Scheduling_Period', 'Scheduling_Strategy'
                 ] + all_properties
                 
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -524,9 +607,11 @@ class NiFiFlowParser:
                         'Processor_Name': proc['name'],
                         'Processor_ID': proc['id'],
                         'Processor_Type': proc_type,
+                        'Status': proc['state'],
                         'Group_Location': proc['group'],
                         'Concurrent_Tasks': proc['concurrent_tasks'],
-                        'Scheduling_Period': proc['scheduling_period']
+                        'Scheduling_Period': proc['scheduling_period'],
+                        'Scheduling_Strategy': proc['scheduling_strategy']
                     }
                     
                     # Add each property as a column
@@ -619,6 +704,16 @@ class NiFiFlowParser:
         
         return found_focus_processors
     
+    def get_status_emoji(self, state: str) -> str:
+        """Get emoji representation for processor state."""
+        state_emojis = {
+            'RUNNING': '🟢',
+            'STOPPED': '🔴', 
+            'DISABLED': '⚫',
+            'UNKNOWN': '🔍'
+        }
+        return state_emojis.get(state.upper(), '❓')
+    
     def get_processors_by_type(self, processor_type: str) -> List[Dict]:
         """Get all processors of a specific type."""
         return [proc for proc in self.processors if processor_type.lower() in proc['type'].lower()]
@@ -673,6 +768,19 @@ def main():
             processor_types[proc_type] += 1
         else:
             processor_types[proc_type] = 1
+    
+    # Show processor status summary
+    running_count = sum(1 for p in processors if p['state'] == 'RUNNING')
+    stopped_count = sum(1 for p in processors if p['state'] == 'STOPPED')
+    disabled_count = sum(1 for p in processors if p['state'] == 'DISABLED')
+    unknown_count = sum(1 for p in processors if p['state'] not in ['RUNNING', 'STOPPED', 'DISABLED'])
+    
+    print(f"\n🚦 PROCESSOR STATUS SUMMARY:")
+    print(f"  🟢 Running: {running_count}")
+    print(f"  🔴 Stopped: {stopped_count}")
+    print(f"  ⚫ Disabled: {disabled_count}")
+    if unknown_count > 0:
+        print(f"  🔍 Unknown: {unknown_count}")
     
     for proc_type in sorted(processor_types.keys()):
         count = processor_types[proc_type]
