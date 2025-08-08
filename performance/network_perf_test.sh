@@ -58,6 +58,9 @@ TESTS PERFORMED:
 DEPENDENCIES:
     Required: ping, traceroute, nc (netcat)
     Optional: mtr, iperf3, dig, nmap
+    
+    If tools are missing, the script will show installation commands
+    for your operating system (Linux/Ubuntu/CentOS/macOS)
 
 EOF
 }
@@ -106,6 +109,67 @@ show_progress() {
     fi
 }
 
+# Get install command for missing tools
+get_install_command() {
+    local tool=$1
+    local os_type=$(uname -s | tr '[:upper:]' '[:lower:]')
+    
+    case $tool in
+        ping)
+            case $os_type in
+                linux) echo "apt-get install iputils-ping  # or yum install iputils" ;;
+                darwin) echo "ping is built-in on macOS" ;;
+                *) echo "Install ping utility for your OS" ;;
+            esac
+            ;;
+        traceroute)
+            case $os_type in
+                linux) echo "apt-get install traceroute  # or yum install traceroute" ;;
+                darwin) echo "traceroute is built-in on macOS" ;;
+                *) echo "Install traceroute utility for your OS" ;;
+            esac
+            ;;
+        nc)
+            case $os_type in
+                linux) echo "apt-get install netcat-openbsd  # or yum install nc" ;;
+                darwin) echo "nc is built-in on macOS" ;;
+                *) echo "Install netcat utility for your OS" ;;
+            esac
+            ;;
+        mtr)
+            case $os_type in
+                linux) echo "apt-get install mtr  # or yum install mtr" ;;
+                darwin) echo "brew install mtr" ;;
+                *) echo "Install mtr (My TraceRoute) for your OS" ;;
+            esac
+            ;;
+        iperf3)
+            case $os_type in
+                linux) echo "apt-get install iperf3  # or yum install iperf3" ;;
+                darwin) echo "brew install iperf3" ;;
+                *) echo "Install iperf3 for your OS" ;;
+            esac
+            ;;
+        dig)
+            case $os_type in
+                linux) echo "apt-get install dnsutils  # or yum install bind-utils" ;;
+                darwin) echo "dig is built-in on macOS" ;;
+                *) echo "Install dig/DNS utilities for your OS" ;;
+            esac
+            ;;
+        nmap)
+            case $os_type in
+                linux) echo "apt-get install nmap  # or yum install nmap" ;;
+                darwin) echo "brew install nmap" ;;
+                *) echo "Install nmap for your OS" ;;
+            esac
+            ;;
+        *)
+            echo "Install $tool for your operating system"
+            ;;
+    esac
+}
+
 # Check dependencies
 check_dependencies() {
     local missing_deps=()
@@ -127,12 +191,17 @@ check_dependencies() {
     
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         log_error "Missing required dependencies: ${missing_deps[*]}"
-        log_error "Please install missing tools and try again"
+        for dep in "${missing_deps[@]}"; do
+            log_error "To install $dep: $(get_install_command $dep)"
+        done
         exit 1
     fi
     
     if [[ ${#optional_deps[@]} -gt 0 ]]; then
         log_warning "Optional tools not found: ${optional_deps[*]}"
+        for dep in "${optional_deps[@]}"; do
+            log_warning "To install $dep: $(get_install_command $dep)"
+        done
         log_warning "Some advanced tests may be skipped"
     fi
 }
@@ -198,6 +267,9 @@ test_network_latency() {
         log_verbose "Running MTR analysis..."
         mtr --report --report-cycles 10 $TARGET_IP > "$LOG_DIR/mtr_report.log" 2>&1 &
         local mtr_pid=$!
+    else
+        log_verbose "MTR not available, skipping advanced path analysis"
+        log_info "To install MTR: $(get_install_command mtr)"
     fi
     
     # Wait for traceroute
@@ -209,6 +281,8 @@ test_network_latency() {
 test_bandwidth() {
     if ! command -v iperf3 >/dev/null 2>&1; then
         log_warning "iperf3 not available, skipping bandwidth test"
+        log_info "To install iperf3: $(get_install_command iperf3)"
+        echo "Bandwidth Test: Skipped (iperf3 not installed)" >> "$SUMMARY_FILE"
         return
     fi
     
@@ -236,6 +310,8 @@ test_bandwidth() {
         fi
     else
         log_warning "No iperf3 server found on port 5201, skipping bandwidth test"
+        log_info "To run iperf3 server on target: iperf3 -s -p 5201"
+        echo "Bandwidth Test: Skipped (no iperf3 server on target)" >> "$SUMMARY_FILE"
     fi
 }
 
@@ -285,6 +361,8 @@ test_ports_connectivity() {
 test_dns_performance() {
     if ! command -v dig >/dev/null 2>&1; then
         log_warning "dig not available, skipping DNS test"
+        log_info "To install dig: $(get_install_command dig)"
+        echo "DNS Resolution Test: Skipped (dig not installed)" >> "$SUMMARY_FILE"
         return
     fi
     
