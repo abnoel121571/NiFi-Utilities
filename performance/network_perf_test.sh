@@ -210,21 +210,20 @@ check_dependencies() {
 detect_source_ip() {
     local target=$1
     local source_ip
-    
-    # Try to get the source IP that would be used to reach the target
-    source_ip=$(ip route get $target 2>/dev/null | grep -oP 'src \K\S+' | head -1)
-    
-    if [[ -z "$source_ip" ]]; then
-        # Fallback: get default interface IP
-        source_ip=$(ip route | grep default | grep -oP 'src \K\S+' | head -1)
+
+    if command -v ip >/dev/null 2>&1; then
+        source_ip=$(ip route get "$target" 2>/dev/null | grep -oP 'src \K\S+' | head -1)
     fi
-    
+
     if [[ -z "$source_ip" ]]; then
-        # Final fallback
-        source_ip=$(hostname -I | awk '{print $1}')
+        source_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
-    
-    echo "$source_ip"
+
+    if [[ -z "$source_ip" ]]; then
+        source_ip=$(hostname -i 2>/dev/null | awk '{print $1}')
+    fi
+
+    echo "${source_ip:-127.0.0.1}"
 }
 
 # Network latency testing
@@ -482,10 +481,10 @@ main() {
     SUMMARY_FILE="$LOG_DIR/summary.txt"
     
     # Setup output redirection if specified
-    if [[ -n "$OUTPUT_FILE" ]]; then
-        exec 1> >(tee -a "$OUTPUT_FILE")
-        exec 2> >(tee -a "$OUTPUT_FILE" >&2)
-    fi
+    #if [[ -n "$OUTPUT_FILE" ]]; then
+    #    exec 1> >(tee -a "$OUTPUT_FILE")
+    #    exec 2> >(tee -a "$OUTPUT_FILE" >&2)
+    #fi
     
     # Check dependencies
     check_dependencies
@@ -516,3 +515,4 @@ main() {
 
 # Execute main function with all arguments
 main "$@"
+
