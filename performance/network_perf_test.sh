@@ -1,213 +1,440 @@
 #!/bin/bash
 
-# Network Performance Testing Suite for NiFi Azure Migration
-# Phase 1: Network Assessment Scripts
+# Generic Network Performance Testing Suite
+# Enhanced version with command-line arguments and improved output
 
-echo "=== Network Performance Testing Suite ==="
-echo "Testing Date: $(date)"
-echo "=========================================="
+set -euo pipefail
 
-# Configuration Variables
-AZURE_VM_IP="10.0.1.100"  # Replace with actual Azure NiFi VM IP
-ORACLE_HOST="192.168.1.100"  # Replace with Oracle server IP
-TEST_DURATION=300  # 5 minutes
-LOG_DIR="./network_tests_$(date +%Y%m%d_%H%M%S)"
+# Default configuration
+DEFAULT_TEST_DURATION=300
+DEFAULT_LOG_DIR="./network_tests_$(date +%Y%m%d_%H%M%S)"
+DEFAULT_OUTPUT_FILE=""
+VERBOSE=false
+QUIET=false
 
-# Create log directory
-mkdir -p $LOG_DIR
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Function: Network Latency Testing
+# Usage function
+usage() {
+    cat << EOF
+Generic Network Performance Testing Suite
+
+USAGE:
+    $0 -t TARGET_IP [OPTIONS]
+
+REQUIRED:
+    -t, --target IP         Target IP address or hostname to test
+
+OPTIONS:
+    -s, --source IP         Source IP address (default: auto-detect)
+    -d, --duration SECONDS  Test duration in seconds (default: $DEFAULT_TEST_DURATION)
+    -o, --output FILE       Save detailed output to file
+    -l, --log-dir DIR       Log directory (default: $DEFAULT_LOG_DIR)
+    -p, --ports PORT_LIST   Comma-separated list of ports to test (default: 22,80,443)
+    -q, --quiet             Suppress detailed output, show only summary
+    -v, --verbose           Show verbose output
+    -h, --help              Show this help message
+
+EXAMPLES:
+    $0 -t 192.168.1.100
+    $0 -t 10.0.1.50 -s 192.168.1.10 -d 60 -o network_test.log
+    $0 -t example.com -p "22,80,443,8080" --verbose
+    $0 -t 172.16.1.1 --quiet --log-dir /tmp/tests
+
+TESTS PERFORMED:
+    • Network latency (ping, traceroute)
+    • Bandwidth testing (iperf3 if available)
+    • Network quality (packet loss, jitter)
+    • TCP optimization analysis
+    • DNS resolution performance
+    • Port connectivity
+    • Network path analysis
+
+DEPENDENCIES:
+    Required: ping, traceroute, nc (netcat)
+    Optional: mtr, iperf3, dig, nmap
+
+EOF
+}
+
+# Logging functions
+log_info() {
+    if [[ "$QUIET" != true ]]; then
+        echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+    fi
+}
+
+log_success() {
+    if [[ "$QUIET" != true ]]; then
+        echo -e "${GREEN}[SUCCESS]${NC} $1" | tee -a "$LOG_FILE"
+    fi
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+log_verbose() {
+    if [[ "$VERBOSE" == true && "$QUIET" != true ]]; then
+        echo -e "${NC}[VERBOSE]${NC} $1" | tee -a "$LOG_FILE"
+    fi
+}
+
+# Progress indicator
+show_progress() {
+    local duration=$1
+    local message=$2
+    
+    if [[ "$QUIET" != true ]]; then
+        echo -n "$message "
+        for ((i=0; i<duration; i++)); do
+            echo -n "."
+            sleep 1
+        done
+        echo " Done!"
+    else
+        sleep $duration
+    fi
+}
+
+# Check dependencies
+check_dependencies() {
+    local missing_deps=()
+    local optional_deps=()
+    
+    # Required dependencies
+    for cmd in ping traceroute nc; do
+        if ! command -v $cmd >/dev/null 2>&1; then
+            missing_deps+=($cmd)
+        fi
+    done
+    
+    # Optional dependencies
+    for cmd in mtr iperf3 dig nmap; do
+        if ! command -v $cmd >/dev/null 2>&1; then
+            optional_deps+=($cmd)
+        fi
+    done
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        log_error "Missing required dependencies: ${missing_deps[*]}"
+        log_error "Please install missing tools and try again"
+        exit 1
+    fi
+    
+    if [[ ${#optional_deps[@]} -gt 0 ]]; then
+        log_warning "Optional tools not found: ${optional_deps[*]}"
+        log_warning "Some advanced tests may be skipped"
+    fi
+}
+
+# Auto-detect source IP
+detect_source_ip() {
+    local target=$1
+    local source_ip
+    
+    # Try to get the source IP that would be used to reach the target
+    source_ip=$(ip route get $target 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    
+    if [[ -z "$source_ip" ]]; then
+        # Fallback: get default interface IP
+        source_ip=$(ip route | grep default | grep -oP 'src \K\S+' | head -1)
+    fi
+    
+    if [[ -z "$source_ip" ]]; then
+        # Final fallback
+        source_ip=$(hostname -I | awk '{print $1}')
+    fi
+    
+    echo "$source_ip"
+}
+
+# Network latency testing
 test_network_latency() {
-    echo "Testing network latency to Azure VM..."
+    log_info "Testing network latency to $TARGET_IP..."
     
     # Basic ping test
-    ping -c 100 $AZURE_VM_IP > $LOG_DIR/ping_azure_vm.log 2>&1
+    local ping_result=$(ping -c 20 -i 0.5 $TARGET_IP 2>&1)
+    echo "$ping_result" > "$LOG_DIR/ping_results.log"
     
-    # MTR (My TraceRoute) for detailed path analysis
-    mtr --report --report-cycles 50 $AZURE_VM_IP > $LOG_DIR/mtr_azure_vm.log 2>&1
+    # Extract statistics
+    local packet_loss=$(echo "$ping_result" | grep -oP '\d+(?=% packet loss)' || echo "N/A")
+    local avg_rtt=$(echo "$ping_result" | grep -oP 'rtt min/avg/max/mdev = [\d.]+/\K[\d.]+' || echo "N/A")
     
-    # Traceroute for path discovery
-    traceroute $AZURE_VM_IP > $LOG_DIR/traceroute_azure_vm.log 2>&1
+    echo "Packet Loss: ${packet_loss}%" >> "$SUMMARY_FILE"
+    echo "Average RTT: ${avg_rtt}ms" >> "$SUMMARY_FILE"
     
-    echo "Latency tests completed. Results in $LOG_DIR/"
+    if [[ "$packet_loss" != "N/A" && "$packet_loss" -gt 5 ]]; then
+        log_warning "High packet loss detected: ${packet_loss}%"
+    elif [[ "$packet_loss" != "N/A" ]]; then
+        log_success "Packet loss: ${packet_loss}%"
+    fi
+    
+    if [[ "$avg_rtt" != "N/A" ]]; then
+        local rtt_int=${avg_rtt%.*}
+        if [[ $rtt_int -gt 100 ]]; then
+            log_warning "High latency detected: ${avg_rtt}ms"
+        else
+            log_success "Average latency: ${avg_rtt}ms"
+        fi
+    fi
+    
+    # Traceroute
+    log_verbose "Running traceroute..."
+    traceroute $TARGET_IP > "$LOG_DIR/traceroute.log" 2>&1 &
+    local trace_pid=$!
+    
+    # MTR if available
+    if command -v mtr >/dev/null 2>&1; then
+        log_verbose "Running MTR analysis..."
+        mtr --report --report-cycles 10 $TARGET_IP > "$LOG_DIR/mtr_report.log" 2>&1 &
+        local mtr_pid=$!
+    fi
+    
+    # Wait for traceroute
+    wait $trace_pid 2>/dev/null || true
+    [[ -n "${mtr_pid:-}" ]] && wait $mtr_pid 2>/dev/null || true
 }
 
-# Function: Bandwidth Testing
+# Bandwidth testing
 test_bandwidth() {
-    echo "Testing bandwidth between on-prem and Azure..."
+    if ! command -v iperf3 >/dev/null 2>&1; then
+        log_warning "iperf3 not available, skipping bandwidth test"
+        return
+    fi
     
-    # iPerf3 bandwidth test (requires iPerf3 server on Azure VM)
-    # Run this on Azure VM first: iperf3 -s -p 5201
+    log_info "Testing bandwidth (requires iperf3 server on target)..."
     
-    # TCP bandwidth test
-    iperf3 -c $AZURE_VM_IP -t $TEST_DURATION -P 4 -f M > $LOG_DIR/iperf3_tcp.log 2>&1
-    
-    # UDP bandwidth test
-    iperf3 -c $AZURE_VM_IP -u -b 100M -t 60 > $LOG_DIR/iperf3_udp.log 2>&1
-    
-    echo "Bandwidth tests completed."
-}
-
-# Function: Network Quality Assessment
-test_network_quality() {
-    echo "Testing network quality metrics..."
-    
-    # Extended ping for packet loss analysis
-    ping -c 1000 -i 0.1 $AZURE_VM_IP | tee $LOG_DIR/extended_ping.log
-    
-    # Calculate statistics
-    packet_loss=$(grep "packet loss" $LOG_DIR/extended_ping.log | awk '{print $6}')
-    avg_rtt=$(grep "rtt min/avg/max/mdev" $LOG_DIR/extended_ping.log | awk -F'/' '{print $5}')
-    
-    echo "Packet Loss: $packet_loss" >> $LOG_DIR/network_summary.txt
-    echo "Average RTT: ${avg_rtt}ms" >> $LOG_DIR/network_summary.txt
-}
-
-# Function: TCP Window Scaling Test
-test_tcp_optimization() {
-    echo "Testing TCP optimization parameters..."
-    
-    # Check current TCP settings
-    echo "=== Current TCP Settings ===" > $LOG_DIR/tcp_settings.log
-    sysctl net.core.rmem_max >> $LOG_DIR/tcp_settings.log
-    sysctl net.core.wmem_max >> $LOG_DIR/tcp_settings.log
-    sysctl net.ipv4.tcp_window_scaling >> $LOG_DIR/tcp_settings.log
-    sysctl net.ipv4.tcp_timestamps >> $LOG_DIR/tcp_settings.log
-    
-    # Test different TCP window sizes with curl
-    for window_size in 64k 128k 256k 512k 1M; do
-        echo "Testing TCP window size: $window_size"
-        curl -w "@curl-format.txt" -o /dev/null -s "http://$AZURE_VM_IP:8080/nifi" \
-             --tcp-nodelay --tcp-fastopen \
-             >> $LOG_DIR/tcp_window_test_${window_size}.log 2>&1
-    done
-}
-
-# Function: DNS Resolution Testing
-test_dns_performance() {
-    echo "Testing DNS resolution performance..."
-    
-    # DNS lookup time for Azure VM
-    for i in {1..50}; do
-        dig +stats $AZURE_VM_IP | grep "Query time:" >> $LOG_DIR/dns_lookup_times.log
-        sleep 1
-    done
-    
-    # Calculate average DNS lookup time
-    avg_dns_time=$(awk '{sum+=$4} END {print sum/NR}' $LOG_DIR/dns_lookup_times.log)
-    echo "Average DNS lookup time: ${avg_dns_time}ms" >> $LOG_DIR/network_summary.txt
-}
-
-# Function: Firewall and Port Testing
-test_ports_connectivity() {
-    echo "Testing port connectivity..."
-    
-    # Common NiFi ports
-    NIFI_PORTS=(8080 8443 8082 8083 10000 10001)
-    
-    for port in "${NIFI_PORTS[@]}"; do
-        echo "Testing port $port..."
-        nc -zv $AZURE_VM_IP $port >> $LOG_DIR/port_connectivity.log 2>&1
+    # Test if iperf3 server is running on target
+    if nc -z $TARGET_IP 5201 2>/dev/null; then
+        log_verbose "iperf3 server detected, running bandwidth test..."
         
-        # Measure connection time
-        time_output=$(time nc -z $AZURE_VM_IP $port 2>&1)
-        echo "Port $port connection time: $time_output" >> $LOG_DIR/port_timing.log
+        # TCP test
+        iperf3 -c $TARGET_IP -t 30 -f M > "$LOG_DIR/bandwidth_tcp.log" 2>&1 || {
+            log_warning "TCP bandwidth test failed"
+        }
+        
+        # UDP test
+        iperf3 -c $TARGET_IP -u -b 50M -t 10 > "$LOG_DIR/bandwidth_udp.log" 2>&1 || {
+            log_warning "UDP bandwidth test failed"
+        }
+        
+        # Extract bandwidth results
+        if [[ -f "$LOG_DIR/bandwidth_tcp.log" ]]; then
+            local tcp_bw=$(grep "sender" "$LOG_DIR/bandwidth_tcp.log" | tail -1 | awk '{print $(NF-2), $(NF-1)}')
+            echo "TCP Bandwidth: $tcp_bw" >> "$SUMMARY_FILE"
+            log_success "TCP bandwidth: $tcp_bw"
+        fi
+    else
+        log_warning "No iperf3 server found on port 5201, skipping bandwidth test"
+    fi
+}
+
+# Network quality assessment
+test_network_quality() {
+    log_info "Assessing network quality..."
+    
+    # Extended ping for jitter analysis
+    local jitter_test=$(ping -c 50 -i 0.1 $TARGET_IP 2>&1)
+    echo "$jitter_test" > "$LOG_DIR/jitter_test.log"
+    
+    # Calculate jitter (standard deviation of RTT)
+    local rtts=$(echo "$jitter_test" | grep -oP 'time=\K[\d.]+' | head -20)
+    if [[ -n "$rtts" ]]; then
+        local jitter=$(echo "$rtts" | awk '{sum+=$1; sumsq+=$1*$1} END {print sqrt(sumsq/NR - (sum/NR)^2)}')
+        echo "Network Jitter: ${jitter}ms" >> "$SUMMARY_FILE"
+        log_success "Network jitter: ${jitter}ms"
+    fi
+}
+
+# Port connectivity testing
+test_ports_connectivity() {
+    log_info "Testing port connectivity..."
+    
+    IFS=',' read -ra PORTS_ARRAY <<< "$TEST_PORTS"
+    local open_ports=()
+    local closed_ports=()
+    
+    for port in "${PORTS_ARRAY[@]}"; do
+        port=$(echo $port | xargs)  # trim whitespace
+        log_verbose "Testing port $port..."
+        
+        if timeout 5 nc -z $TARGET_IP $port 2>/dev/null; then
+            open_ports+=($port)
+            log_success "Port $port: OPEN"
+        else
+            closed_ports+=($port)
+            log_warning "Port $port: CLOSED/FILTERED"
+        fi
     done
+    
+    echo "Open Ports: ${open_ports[*]:-None}" >> "$SUMMARY_FILE"
+    echo "Closed Ports: ${closed_ports[*]:-None}" >> "$SUMMARY_FILE"
 }
 
-# Function: Azure-specific Network Tests
-test_azure_network() {
-    echo "Running Azure-specific network tests..."
+# DNS performance testing
+test_dns_performance() {
+    if ! command -v dig >/dev/null 2>&1; then
+        log_warning "dig not available, skipping DNS test"
+        return
+    fi
     
-    # Test Azure Storage endpoint connectivity
-    AZURE_STORAGE_ENDPOINT="yourstorageaccount.dfs.core.windows.net"
+    log_info "Testing DNS resolution performance..."
     
-    # DNS resolution for Azure Storage
-    nslookup $AZURE_STORAGE_ENDPOINT >> $LOG_DIR/azure_storage_dns.log
+    local dns_times=()
+    for i in {1..5}; do
+        local query_time=$(dig +short +stats $TARGET_IP | grep -oP 'Query time: \K\d+' || echo "0")
+        dns_times+=($query_time)
+        log_verbose "DNS query $i: ${query_time}ms"
+    done
     
-    # Connectivity test to Azure Storage
-    curl -I "https://$AZURE_STORAGE_ENDPOINT" >> $LOG_DIR/azure_storage_connectivity.log 2>&1
-    
-    # Test Azure Service endpoints
-    curl -w "@curl-format.txt" -o /dev/null -s "https://management.azure.com/" \
-         >> $LOG_DIR/azure_management_endpoint.log 2>&1
+    local avg_dns=$(printf '%s\n' "${dns_times[@]}" | awk '{sum+=$1} END {print sum/NR}')
+    echo "Average DNS Resolution: ${avg_dns}ms" >> "$SUMMARY_FILE"
+    log_success "Average DNS resolution: ${avg_dns}ms"
 }
 
-# Create curl format file for detailed timing
-cat > curl-format.txt << 'EOF'
-     time_namelookup:  %{time_namelookup}\n
-        time_connect:  %{time_connect}\n
-     time_appconnect:  %{time_appconnect}\n
-    time_pretransfer:  %{time_pretransfer}\n
-       time_redirect:  %{time_redirect}\n
-  time_starttransfer:  %{time_starttransfer}\n
-                     ----------\n
-          time_total:  %{time_total}\n
-EOF
-
-# Function: Generate Network Report
-generate_network_report() {
-    echo "Generating network performance report..."
+# Generate summary report
+generate_summary_report() {
+    echo
+    echo "==============================================="
+    echo "    NETWORK PERFORMANCE TEST SUMMARY"
+    echo "==============================================="
+    echo "Test Date: $(date)"
+    echo "Source IP: $SOURCE_IP"
+    echo "Target IP: $TARGET_IP"
+    echo "Test Duration: ${TEST_DURATION}s"
+    echo "==============================================="
     
-    cat > $LOG_DIR/network_performance_report.md << EOF
-# Network Performance Test Report
-
-**Test Date:** $(date)
-**Test Duration:** $TEST_DURATION seconds
-**Target:** $AZURE_VM_IP
-
-## Summary
-$(cat $LOG_DIR/network_summary.txt)
-
-## Recommendations
-Based on the test results:
-
-1. **Latency Optimization:**
-   - If RTT > 100ms, consider ExpressRoute
-   - If packet loss > 1%, investigate network path
-
-2. **Bandwidth Optimization:**
-   - Compare iPerf3 results with expected throughput
-   - Consider multiple parallel connections if single connection is limited
-
-3. **TCP Optimization:**
-   - Tune TCP window scaling based on bandwidth-delay product
-   - Enable TCP timestamps if not already enabled
-
-## Next Steps
-1. Review detailed logs in this directory
-2. Implement recommended network optimizations
-3. Re-run tests after optimizations
-4. Proceed to NiFi performance testing phase
-EOF
-
-    echo "Network performance report generated: $LOG_DIR/network_performance_report.md"
+    while IFS= read -r line; do
+        echo "$line"
+    done < "$SUMMARY_FILE"
+    
+    echo "==============================================="
+    echo "Detailed logs saved to: $LOG_DIR"
+    if [[ -n "$OUTPUT_FILE" ]]; then
+        echo "Output also saved to: $OUTPUT_FILE"
+    fi
+    echo "==============================================="
 }
 
-# Main execution
+# Parse command line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -t|--target)
+                TARGET_IP="$2"
+                shift 2
+                ;;
+            -s|--source)
+                SOURCE_IP="$2"
+                shift 2
+                ;;
+            -d|--duration)
+                TEST_DURATION="$2"
+                shift 2
+                ;;
+            -o|--output)
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -l|--log-dir)
+                LOG_DIR="$2"
+                shift 2
+                ;;
+            -p|--ports)
+                TEST_PORTS="$2"
+                shift 2
+                ;;
+            -q|--quiet)
+                QUIET=true
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Validate required arguments
+    if [[ -z "${TARGET_IP:-}" ]]; then
+        echo "Error: Target IP is required"
+        usage
+        exit 1
+    fi
+    
+    # Set defaults
+    TEST_DURATION=${TEST_DURATION:-$DEFAULT_TEST_DURATION}
+    LOG_DIR=${LOG_DIR:-$DEFAULT_LOG_DIR}
+    TEST_PORTS=${TEST_PORTS:-"22,80,443"}
+    
+    # Auto-detect source IP if not provided
+    if [[ -z "${SOURCE_IP:-}" ]]; then
+        SOURCE_IP=$(detect_source_ip "$TARGET_IP")
+        log_verbose "Auto-detected source IP: $SOURCE_IP"
+    fi
+}
+
+# Main function
 main() {
-    echo "Starting comprehensive network performance testing..."
+    # Parse command line arguments
+    parse_arguments "$@"
+    
+    # Setup logging
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/test.log"
+    SUMMARY_FILE="$LOG_DIR/summary.txt"
+    
+    # Setup output redirection if specified
+    if [[ -n "$OUTPUT_FILE" ]]; then
+        exec 1> >(tee -a "$OUTPUT_FILE")
+        exec 2> >(tee -a "$OUTPUT_FILE" >&2)
+    fi
     
     # Check dependencies
-    command -v ping >/dev/null 2>&1 || { echo "ping required but not installed."; exit 1; }
-    command -v mtr >/dev/null 2>&1 || { echo "mtr required but not installed. Install: apt-get install mtr"; exit 1; }
-    command -v iperf3 >/dev/null 2>&1 || { echo "iperf3 required but not installed. Install: apt-get install iperf3"; exit 1; }
-    command -v nc >/dev/null 2>&1 || { echo "netcat required but not installed."; exit 1; }
+    check_dependencies
     
-    # Run all tests
+    # Initialize summary file
+    echo "# Network Performance Test Summary" > "$SUMMARY_FILE"
+    echo "Date: $(date)" >> "$SUMMARY_FILE"
+    echo "Source: $SOURCE_IP" >> "$SUMMARY_FILE"
+    echo "Target: $TARGET_IP" >> "$SUMMARY_FILE"
+    echo "Duration: ${TEST_DURATION}s" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    
+    log_info "Starting network performance tests..."
+    log_info "Source: $SOURCE_IP → Target: $TARGET_IP"
+    
+    # Run tests
     test_network_latency
-    test_bandwidth  # Note: Requires iperf3 server running on Azure VM
+    test_bandwidth
     test_network_quality
-    test_tcp_optimization
-    test_dns_performance
     test_ports_connectivity
-    test_azure_network
+    test_dns_performance
     
-    # Generate report
-    generate_network_report
+    # Generate and display summary
+    generate_summary_report
     
-    echo "All network tests completed. Results available in: $LOG_DIR"
+    log_success "Network performance testing completed!"
 }
 
-# Execute main function
+# Execute main function with all arguments
 main "$@"
