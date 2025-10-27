@@ -1,0 +1,6 @@
+[1;33m[WARNING][0m Optional tools not found: nmap
+[1;33m[WARNING][0m To install nmap: brew install nmap
+[1;33m[WARNING][0m Some advanced tests may be skipped
+[0;34m[INFO][0m Starting network performance tests...
+[0;34m[INFO][0m Source: 127.0.0.1 → Target: cloudera.com
+[0;34m[INFO][0m Testing network latency to cloudera.com...

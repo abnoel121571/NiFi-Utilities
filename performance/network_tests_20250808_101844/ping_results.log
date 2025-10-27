@@ -1,0 +1,25 @@
+PING cloudera.com (199.232.39.10): 56 data bytes
+64 bytes from 199.232.39.10: icmp_seq=0 ttl=55 time=30.105 ms
+64 bytes from 199.232.39.10: icmp_seq=1 ttl=55 time=24.524 ms
+64 bytes from 199.232.39.10: icmp_seq=2 ttl=55 time=17.272 ms
+64 bytes from 199.232.39.10: icmp_seq=3 ttl=55 time=21.462 ms
+64 bytes from 199.232.39.10: icmp_seq=4 ttl=55 time=17.978 ms
+64 bytes from 199.232.39.10: icmp_seq=5 ttl=55 time=20.644 ms
+64 bytes from 199.232.39.10: icmp_seq=6 ttl=55 time=20.392 ms
+64 bytes from 199.232.39.10: icmp_seq=7 ttl=55 time=21.477 ms
+64 bytes from 199.232.39.10: icmp_seq=8 ttl=55 time=21.637 ms
+64 bytes from 199.232.39.10: icmp_seq=9 ttl=55 time=22.202 ms
+64 bytes from 199.232.39.10: icmp_seq=10 ttl=55 time=22.300 ms
+64 bytes from 199.232.39.10: icmp_seq=11 ttl=55 time=23.065 ms
+64 bytes from 199.232.39.10: icmp_seq=12 ttl=55 time=21.870 ms
+64 bytes from 199.232.39.10: icmp_seq=13 ttl=55 time=22.511 ms
+Request timeout for icmp_seq 14
+64 bytes from 199.232.39.10: icmp_seq=15 ttl=55 time=170.742 ms
+64 bytes from 199.232.39.10: icmp_seq=16 ttl=55 time=20.969 ms
+64 bytes from 199.232.39.10: icmp_seq=17 ttl=55 time=20.529 ms
+64 bytes from 199.232.39.10: icmp_seq=18 ttl=55 time=16.521 ms
+64 bytes from 199.232.39.10: icmp_seq=19 ttl=55 time=21.548 ms
+
+--- cloudera.com ping statistics ---
+20 packets transmitted, 19 packets received, 5.0% packet loss
+round-trip min/avg/max/stddev = 16.521/29.355/170.742/33.440 ms
